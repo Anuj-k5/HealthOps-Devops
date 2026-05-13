@@ -1,52 +1,64 @@
 pipeline {
-    agent any
+agent any
 
-    environment {
-        IMAGE_NAME = "healthops-app"
-        REGISTRY = "docker.io/akshata234"
+```
+environment {
+    DOCKER_IMAGE = "anujk5/healthops:latest"
+    AWS_REGION = "ap-south-1"
+    CLUSTER_NAME = "healthops-cluster"
+}
+
+stages {
+
+    stage('Clone Repo') {
+        steps {
+            git branch: 'main',
+            url: 'https://github.com/Anuj-k5/HealthOps-Devops.git'
+        }
     }
 
-    stages {
-
-        stage('Clone Repo') {
-            steps {
-                git url: 'https://github.com/Akshata-del1531/healthops-app.git', branch: 'main'
-            }
+    stage('Build Docker Image') {
+        steps {
+            sh 'docker build -t $DOCKER_IMAGE .'
         }
+    }
 
-        stage('Build Docker Image') {
-            steps {
-                bat "docker build -t %REGISTRY%/%IMAGE_NAME%:latest ."
-            }
-        }
+    stage('Login to DockerHub') {
+        steps {
+            withCredentials([usernamePassword(
+                credentialsId: 'dockerhub-creds',
+                usernameVariable: 'DOCKER_USER',
+                passwordVariable: 'DOCKER_PASS'
+            )]) {
 
-        stage('Login to DockerHub') {
-            steps {
-                withCredentials([usernamePassword(
-                    credentialsId: 'dockerhub-credentials',
-                    usernameVariable: 'DOCKER_USER',
-                    passwordVariable: 'DOCKER_PASS'
-                )]) {
-                    bat "echo %DOCKER_PASS% | docker login -u %DOCKER_USER% --password-stdin"
-                }
-            }
-        }
-
-        stage('Push Docker Image') {
-            steps {
-                bat "docker push %REGISTRY%/%IMAGE_NAME%:latest"
-            }
-        }
-
-        stage('Deploy to AWS EKS') {
-            steps {
-                withCredentials([aws(credentialsId: 'aws-credentials', accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY')]) {
-                    bat """
-                    aws eks update-kubeconfig --region ap-south-1 --name healthops-cluster
-                    kubectl apply -f k8s/
-                    """
-                }
+                sh 'echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin'
             }
         }
     }
+
+    stage('Push Docker Image') {
+        steps {
+            sh 'docker push $DOCKER_IMAGE'
+        }
+    }
+
+    stage('Deploy to AWS EKS') {
+        steps {
+
+            withCredentials([[
+                $class: 'AmazonWebServicesCredentialsBinding',
+                credentialsId: 'aws-creds'
+            ]]) {
+
+                sh '''
+                aws eks update-kubeconfig --region $AWS_REGION --name $CLUSTER_NAME
+                kubectl apply -f k8s/
+                kubectl rollout restart deployment healthops-app
+                '''
+            }
+        }
+    }
+}
+```
+
 }
