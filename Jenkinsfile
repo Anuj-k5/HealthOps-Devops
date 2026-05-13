@@ -23,7 +23,7 @@ stages {
         }
     }
 
-    stage('Login to DockerHub') {
+    stage('Login DockerHub') {
         steps {
             withCredentials([usernamePassword(
                 credentialsId: 'dockerhub-creds',
@@ -42,7 +42,7 @@ stages {
         }
     }
 
-    stage('Deploy to AWS EKS') {
+    stage('Deploy To EKS') {
         steps {
 
             withCredentials([[
