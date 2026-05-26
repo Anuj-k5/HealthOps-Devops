@@ -1,16 +1,13 @@
 apiVersion: v1
 kind: Service
-
 metadata:
   name: healthops-service
-
+  namespace: healthops
 spec:
   selector:
-    app: healthops-app
-
+    app: healthops-backend
   ports:
     - protocol: TCP
       port: 80
-      targetPort: 5000
-
+      targetPort: http
   type: LoadBalancer

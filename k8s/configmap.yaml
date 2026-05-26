@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: healthops-backend-config
+  namespace: healthops
+data:
+  FLASK_DEBUG: "false"
+  PORT: "5000"

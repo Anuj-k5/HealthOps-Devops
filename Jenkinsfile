@@ -2,23 +2,67 @@ pipeline {
     agent any
 
     environment {
-        DOCKER_IMAGE = "anujk5/healthops:latest"
+        DOCKER_IMAGE = "anujk5/healthops"
+        IMAGE_TAG = "${BUILD_NUMBER}"
         AWS_REGION = "ap-south-1"
         CLUSTER_NAME = "healthops-cluster"
+        K8S_NAMESPACE = "healthops"
+    }
+
+    options {
+        timestamps()
     }
 
     stages {
-
-        stage('Clone Repo') {
+        stage('Checkout') {
             steps {
-                git branch: 'main',
-                url: 'https://github.com/Anuj-k5/HealthOps-Devops.git'
+                checkout scm
+            }
+        }
+
+        stage('Backend Smoke Tests') {
+            steps {
+                sh '''
+                python3 -m venv .venv
+                . .venv/bin/activate
+                pip install --upgrade pip
+                pip install -r requirements.txt
+                python -m compileall app.py
+                python - <<'PY'
+from app import app
+
+client = app.test_client()
+headers = {'Authorization': 'Bearer healthops-api-token'}
+
+health = client.get('/healthz')
+ready = client.get('/readyz')
+metrics = client.get('/metrics')
+unauthorized = client.get('/api/v1/patients')
+created = client.post(
+    '/api/v1/patients',
+    json={'name': 'CI Smoke Patient', 'age': 28, 'disease': 'validation'},
+    headers=headers,
+)
+created_id = created.get_json()['id']
+deleted = client.delete(f'/api/v1/patients/{created_id}', headers=headers)
+
+assert health.status_code == 200, health.status_code
+assert ready.status_code == 200, ready.status_code
+assert metrics.status_code == 200, metrics.status_code
+assert b'healthops_patients_total' in metrics.data, metrics.data[:500]
+assert unauthorized.status_code == 401, unauthorized.status_code
+assert created.status_code == 201, created.status_code
+assert deleted.status_code == 204, deleted.status_code
+
+print('Backend smoke tests passed.')
+PY
+                '''
             }
         }
 
         stage('Build Docker Image') {
             steps {
-                sh 'docker build -t $DOCKER_IMAGE .'
+                sh 'docker build -t $DOCKER_IMAGE:$IMAGE_TAG -t $DOCKER_IMAGE:latest .'
             }
         }
 
@@ -29,7 +73,6 @@ pipeline {
                     usernameVariable: 'DOCKER_USER',
                     passwordVariable: 'DOCKER_PASS'
                 )]) {
-
                     sh 'echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin'
                 }
             }
@@ -37,22 +80,57 @@ pipeline {
 
         stage('Push Docker Image') {
             steps {
-                sh 'docker push $DOCKER_IMAGE'
+                sh '''
+                docker push $DOCKER_IMAGE:$IMAGE_TAG
+                docker push $DOCKER_IMAGE:latest
+                '''
             }
         }
 
         stage('Deploy To EKS') {
             steps {
-
-                withCredentials([[
-                    $class: 'AmazonWebServicesCredentialsBinding',
-                    credentialsId: 'aws-creds'
-                ]]) {
-
+                withCredentials([
+                    [$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-creds'],
+                    string(credentialsId: 'healthops-secret-key', variable: 'APP_SECRET_KEY'),
+                    string(credentialsId: 'healthops-api-token', variable: 'API_TOKEN'),
+                    string(credentialsId: 'healthops-postgres-db', variable: 'POSTGRES_DB'),
+                    string(credentialsId: 'healthops-postgres-user', variable: 'POSTGRES_USER'),
+                    string(credentialsId: 'healthops-postgres-password', variable: 'POSTGRES_PASSWORD'),
+                    string(credentialsId: 'grafana-admin-user', variable: 'GRAFANA_ADMIN_USER'),
+                    string(credentialsId: 'grafana-admin-password', variable: 'GRAFANA_ADMIN_PASSWORD')
+                ]) {
                     sh '''
                     aws eks update-kubeconfig --region $AWS_REGION --name $CLUSTER_NAME
-                    kubectl apply -f k8s/
-                    kubectl rollout restart deployment healthops-app
+
+                    DATABASE_URL="postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@healthops-postgres.${K8S_NAMESPACE}.svc.cluster.local:5432/${POSTGRES_DB}"
+
+                    kubectl apply -f k8s/namespace.yaml
+                    kubectl create secret generic healthops-secrets \
+                      --namespace $K8S_NAMESPACE \
+                      --from-literal=SECRET_KEY="$APP_SECRET_KEY" \
+                      --from-literal=API_TOKEN="$API_TOKEN" \
+                      --from-literal=POSTGRES_DB="$POSTGRES_DB" \
+                      --from-literal=POSTGRES_USER="$POSTGRES_USER" \
+                      --from-literal=POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
+                      --from-literal=DATABASE_URL="$DATABASE_URL" \
+                      --from-literal=GRAFANA_ADMIN_USER="$GRAFANA_ADMIN_USER" \
+                      --from-literal=GRAFANA_ADMIN_PASSWORD="$GRAFANA_ADMIN_PASSWORD" \
+                      --dry-run=client -o yaml | kubectl apply -f -
+
+                    kubectl apply -f k8s/configmap.yaml
+                    kubectl apply -f k8s/postgres.yaml
+                    kubectl rollout status deployment/healthops-postgres -n $K8S_NAMESPACE --timeout=180s
+
+                    kubectl apply -f k8s/deployment.yaml
+                    kubectl apply -f k8s/service.yaml
+                    kubectl set image deployment/healthops-backend healthops-backend=$DOCKER_IMAGE:$IMAGE_TAG -n $K8S_NAMESPACE
+                    kubectl rollout status deployment/healthops-backend -n $K8S_NAMESPACE --timeout=180s
+
+                    kubectl apply -f monitoring/
+                    kubectl rollout status deployment/prometheus -n $K8S_NAMESPACE --timeout=180s
+                    kubectl rollout status deployment/grafana -n $K8S_NAMESPACE --timeout=180s
+
+                    kubectl get svc -n $K8S_NAMESPACE
                     '''
                 }
             }

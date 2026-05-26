@@ -1,26 +1,75 @@
 apiVersion: apps/v1
 kind: Deployment
-
 metadata:
-  name: healthops-app
-
+  name: healthops-backend
+  namespace: healthops
 spec:
-  replicas: 2
-
+  replicas: 1
+  revisionHistoryLimit: 3
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
-      app: healthops-app
-
+      app: healthops-backend
   template:
     metadata:
       labels:
-        app: healthops-app
-
+        app: healthops-backend
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: /metrics
+        prometheus.io/port: "5000"
     spec:
+      initContainers:
+        - name: wait-for-postgres
+          image: postgres:16-alpine
+          command:
+            - sh
+            - -c
+            - until pg_isready -h healthops-postgres -U "$POSTGRES_USER" -d "$POSTGRES_DB"; do echo waiting for postgres; sleep 2; done
+          env:
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: healthops-secrets
+                  key: POSTGRES_DB
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: healthops-secrets
+                  key: POSTGRES_USER
       containers:
-      - name: healthops-app
-
-        image: anujk5/healthops:latest
-
-        ports:
-        - containerPort: 5000
+        - name: healthops-backend
+          image: anujk5/healthops:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 5000
+              name: http
+          envFrom:
+            - configMapRef:
+                name: healthops-backend-config
+            - secretRef:
+                name: healthops-secrets
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
