@@ -25,74 +25,19 @@ pipeline {
                 script {
                     if (isUnix()) {
                         sh '''
-                        python3 -m venv .venv
-                        . .venv/bin/activate
-                        pip install --upgrade pip
-                        pip install -r requirements.txt
-                        python -m compileall app.py
-                        python - <<'PY'
-from app import app
-
-client = app.test_client()
-headers = {'Authorization': 'Bearer healthops-api-token'}
-
-health = client.get('/healthz')
-ready = client.get('/readyz')
-metrics = client.get('/metrics')
-unauthorized = client.get('/api/v1/patients')
-created = client.post(
-    '/api/v1/patients',
-    json={'name': 'CI Smoke Patient', 'age': 28, 'disease': 'validation'},
-    headers=headers,
-)
-created_id = created.get_json()['id']
-deleted = client.delete(f'/api/v1/patients/{created_id}', headers=headers)
-
-assert health.status_code == 200, health.status_code
-assert ready.status_code == 200, ready.status_code
-assert metrics.status_code == 200, metrics.status_code
-assert b'healthops_patients_total' in metrics.data, metrics.data[:500]
-assert unauthorized.status_code == 401, unauthorized.status_code
-assert created.status_code == 201, created.status_code
-assert deleted.status_code == 204, deleted.status_code
-
-print('Backend smoke tests passed.')
-PY
+                        docker run --rm \
+                          -v "$PWD:/workspace" \
+                          -w /workspace \
+                          python:3.12-slim \
+                          sh -lc "pip install --upgrade pip && pip install -r requirements.txt && python -m compileall app.py ci/smoke_test.py && python ci/smoke_test.py"
                         '''
                     } else {
                         powershell '''
-                        python -m venv .venv
-                        .\\.venv\\Scripts\\python -m pip install --upgrade pip
-                        .\\.venv\\Scripts\\pip install -r requirements.txt
-                        .\\.venv\\Scripts\\python -m compileall app.py
-                        @'
-from app import app
-
-client = app.test_client()
-headers = {'Authorization': 'Bearer healthops-api-token'}
-
-health = client.get('/healthz')
-ready = client.get('/readyz')
-metrics = client.get('/metrics')
-unauthorized = client.get('/api/v1/patients')
-created = client.post(
-    '/api/v1/patients',
-    json={'name': 'CI Smoke Patient', 'age': 28, 'disease': 'validation'},
-    headers=headers,
-)
-created_id = created.get_json()['id']
-deleted = client.delete(f'/api/v1/patients/{created_id}', headers=headers)
-
-assert health.status_code == 200, health.status_code
-assert ready.status_code == 200, ready.status_code
-assert metrics.status_code == 200, metrics.status_code
-assert b'healthops_patients_total' in metrics.data, metrics.data[:500]
-assert unauthorized.status_code == 401, unauthorized.status_code
-assert created.status_code == 201, created.status_code
-assert deleted.status_code == 204, deleted.status_code
-
-print('Backend smoke tests passed.')
-'@ | .\\.venv\\Scripts\\python -
+                        docker run --rm `
+                          -v "${pwd}:/workspace" `
+                          -w /workspace `
+                          python:3.12-slim `
+                          sh -lc "pip install --upgrade pip && pip install -r requirements.txt && python -m compileall app.py ci/smoke_test.py && python ci/smoke_test.py"
                         '''
                     }
                 }
