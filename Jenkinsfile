@@ -20,30 +20,6 @@ pipeline {
             }
         }
 
-        stage('Backend Smoke Tests') {
-            steps {
-                script {
-                    if (isUnix()) {
-                        sh '''
-                        docker run --rm \
-                          -v "$PWD:/workspace" \
-                          -w /workspace \
-                          python:3.12-slim \
-                          sh -lc "pip install --upgrade pip && pip install -r requirements.txt && python -m compileall app.py ci/smoke_test.py && python ci/smoke_test.py"
-                        '''
-                    } else {
-                        powershell '''
-                        docker run --rm `
-                          -v "${pwd}:/workspace" `
-                          -w /workspace `
-                          python:3.12-slim `
-                          sh -lc "pip install --upgrade pip && pip install -r requirements.txt && python -m compileall app.py ci/smoke_test.py && python ci/smoke_test.py"
-                        '''
-                    }
-                }
-            }
-        }
-
         stage('Build Docker Image') {
             steps {
                 script {
@@ -51,6 +27,28 @@ pipeline {
                         sh 'docker build -t $DOCKER_IMAGE:$IMAGE_TAG -t $DOCKER_IMAGE:latest .'
                     } else {
                         powershell 'docker build -t ${env:DOCKER_IMAGE}:${env:IMAGE_TAG} -t ${env:DOCKER_IMAGE}:latest .'
+                    }
+                }
+            }
+        }
+
+        stage('Backend Smoke Tests') {
+            steps {
+                script {
+                    if (isUnix()) {
+                        sh '''
+                        docker run --rm \
+                          --entrypoint sh \
+                          $DOCKER_IMAGE:$IMAGE_TAG \
+                          -lc "python -m compileall app.py ci/smoke_test.py && python ci/smoke_test.py"
+                        '''
+                    } else {
+                        powershell '''
+                        docker run --rm `
+                          --entrypoint sh `
+                          ${env:DOCKER_IMAGE}:${env:IMAGE_TAG} `
+                          -lc "python -m compileall app.py ci/smoke_test.py && python ci/smoke_test.py"
+                        '''
                     }
                 }
             }
