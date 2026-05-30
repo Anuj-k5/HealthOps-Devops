@@ -8,9 +8,9 @@ The project uses CI/CD pipelines with Jenkins, containerization using Docker, an
 
 ## Team Collaborators
 - Akshata M
-- Team Member 2
-- Team Member 3
-- Team Member 4
+- Anuj Kanamadi
+- Simrin B
+- Varun B
 
 ---
 
