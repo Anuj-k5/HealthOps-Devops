@@ -61,6 +61,7 @@ pipeline {
                     usernameVariable: 'DOCKER_USER',
                     passwordVariable: 'DOCKER_PASS'
                 )]) {
+<<<<<<< HEAD
                     script {
                         if (isUnix()) {
                             sh 'echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin'
@@ -68,6 +69,9 @@ pipeline {
                             powershell '$env:DOCKER_PASS | docker login -u $env:DOCKER_USER --password-stdin'
                         }
                     }
+=======
+                    sh 'echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin'
+>>>>>>> 70c81a3 (Simplified Jenkinsfile)
                 }
             }
         }
@@ -92,6 +96,7 @@ pipeline {
 
         stage('Deploy To EKS') {
             steps {
+<<<<<<< HEAD
                 withCredentials([
                     [$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-creds'],
                     string(credentialsId: 'healthops-secret-key', variable: 'APP_SECRET_KEY'),
@@ -173,6 +178,17 @@ pipeline {
                             '''
                         }
                     }
+=======
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'aws-creds'
+                ]]) {
+                    sh '''
+                    aws eks update-kubeconfig --region $AWS_REGION --name $CLUSTER_NAME
+                    kubectl apply -f k8s/
+                    kubectl rollout restart deployment healthops-app
+                    '''
+>>>>>>> 70c81a3 (Simplified Jenkinsfile)
                 }
             }
         }
