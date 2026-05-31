@@ -7,6 +7,9 @@ pipeline {
         AWS_REGION = "ap-south-1"
         CLUSTER_NAME = "healthops-cluster"
         K8S_NAMESPACE = "healthops"
+        POSTGRES_DB = "healthops"
+        POSTGRES_USER = "healthops"
+        GRAFANA_ADMIN_USER = "admin"
     }
 
     options {
@@ -96,10 +99,7 @@ pipeline {
                     [$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-creds'],
                     string(credentialsId: 'healthops-secret-key', variable: 'APP_SECRET_KEY'),
                     string(credentialsId: 'healthops-api-token', variable: 'API_TOKEN'),
-                    string(credentialsId: 'healthops-postgres-db', variable: 'POSTGRES_DB'),
-                    string(credentialsId: 'healthops-postgres-user', variable: 'POSTGRES_USER'),
                     string(credentialsId: 'healthops-postgres-password', variable: 'POSTGRES_PASSWORD'),
-                    string(credentialsId: 'grafana-admin-user', variable: 'GRAFANA_ADMIN_USER'),
                     string(credentialsId: 'grafana-admin-password', variable: 'GRAFANA_ADMIN_PASSWORD')
                 ]) {
                     script {
