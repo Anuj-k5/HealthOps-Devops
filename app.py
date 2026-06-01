@@ -1,13 +1,18 @@
 import os
+from datetime import timedelta
 from functools import wraps
 from secrets import compare_digest
 
+from dotenv import load_dotenv
 from flask import Flask, current_app, flash, jsonify, redirect, render_template, request, session, url_for
 from flask_sqlalchemy import SQLAlchemy
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from prometheus_client import Counter, Gauge
 from prometheus_flask_exporter import PrometheusMetrics
 from sqlalchemy import func, text
 from werkzeug.security import check_password_hash, generate_password_hash
+
+load_dotenv()
 
 db = SQLAlchemy()
 metrics = PrometheusMetrics.for_app_factory(group_by="endpoint")
@@ -38,6 +43,7 @@ DATABASE_UP = Gauge(
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(100), unique=True, nullable=False)
+    email = db.Column(db.String(120), unique=True, nullable=False)
     password_hash = db.Column(db.String(200), nullable=False)
 
 
@@ -143,6 +149,7 @@ def create_app():
         SQLALCHEMY_TRACK_MODIFICATIONS=False,
         SQLALCHEMY_ENGINE_OPTIONS={"pool_pre_ping": True},
         JSON_SORT_KEYS=False,
+        PERMANENT_SESSION_LIFETIME=timedelta(days=7),
     )
 
     db.init_app(flask_app)
@@ -175,6 +182,11 @@ def register_routes(flask_app):
             if user and check_password_hash(user.password_hash, password):
                 session["user_id"] = user.id
                 session["username"] = user.username
+                # Remember-me support
+                if request.form.get("remember"):
+                    session.permanent = True
+                else:
+                    session.permanent = False
                 flash("Logged in successfully.", "success")
                 return redirect(url_for("dashboard"))
 
@@ -187,15 +199,20 @@ def register_routes(flask_app):
     def register():
         if request.method == "POST":
             username = request.form["username"].strip()
+            email = request.form["email"].strip()
             password = request.form["password"]
 
-            existing_user = User.query.filter_by(username=username).first()
+            existing_user = User.query.filter((User.username == username) | (User.email == email)).first()
             if existing_user:
-                flash("Username already exists. Please choose another one.", "danger")
+                if existing_user.username == username:
+                    flash("Username already exists. Please choose another one.", "danger")
+                else:
+                    flash("Email already registered. Please log in.", "danger")
                 return redirect(url_for("register"))
 
             new_user = User(
                 username=username,
+                email=email,
                 password_hash=generate_password_hash(password),
             )
             db.session.add(new_user)
@@ -212,6 +229,83 @@ def register_routes(flask_app):
         session.pop("username", None)
         flash("You have been logged out.", "info")
         return redirect(url_for("login"))
+
+    # ── Forgot / Reset Password ──────────────────────────────────
+    def _get_serializer():
+        return URLSafeTimedSerializer(flask_app.config["SECRET_KEY"])
+
+    @flask_app.route("/forgot-password", methods=["GET", "POST"])
+    def forgot_password():
+        if request.method == "POST":
+            identifier = request.form.get("username", "").strip()
+            # Support both username or email for flexibility
+            user = User.query.filter((User.username == identifier) | (User.email == identifier)).first()
+            if user:
+                token = _get_serializer().dumps(user.username, salt="password-reset")
+                return redirect(url_for("reset_password", token=token))
+            else:
+                flash("If that username/email exists, you will be redirected.", "info")
+            return redirect(url_for("forgot_password"))
+        return render_template("forgot_password.html")
+
+    @flask_app.route("/change-password", methods=["GET", "POST"])
+    @login_required
+    def change_password():
+        if request.method == "POST":
+            current_password = request.form["current_password"]
+            new_password = request.form["new_password"]
+            confirm_password = request.form["confirm_password"]
+            
+            user = User.query.get(session["user_id"])
+            if not check_password_hash(user.password_hash, current_password):
+                flash("Incorrect current password.", "danger")
+                return redirect(url_for("change_password"))
+                
+            if new_password != confirm_password:
+                flash("New passwords do not match.", "danger")
+                return redirect(url_for("change_password"))
+                
+            user.password_hash = generate_password_hash(new_password)
+            db.session.commit()
+            
+            flash("Password updated successfully.", "success")
+            return redirect(url_for("dashboard"))
+            
+        return render_template("change_password.html")
+
+    @flask_app.route("/reset-password/<token>", methods=["GET", "POST"])
+    def reset_password(token):
+        serializer = _get_serializer()
+        try:
+            # Token expiration set to 30 minutes (1800 seconds)
+            username = serializer.loads(token, salt="password-reset", max_age=1800)
+        except SignatureExpired:
+            flash("The reset link has expired. Please request a new one.", "danger")
+            return redirect(url_for("forgot_password"))
+        except BadSignature:
+            flash("Invalid reset link.", "danger")
+            return redirect(url_for("forgot_password"))
+
+        user = User.query.filter_by(username=username).first()
+        if not user:
+            flash("User not found.", "danger")
+            return redirect(url_for("forgot_password"))
+
+        if request.method == "POST":
+            password = request.form.get("password", "")
+            confirm = request.form.get("confirm_password", "")
+            if not password:
+                flash("Password cannot be empty.", "danger")
+                return redirect(url_for("reset_password", token=token))
+            if password != confirm:
+                flash("Passwords do not match.", "danger")
+                return redirect(url_for("reset_password", token=token))
+            user.password_hash = generate_password_hash(password)
+            db.session.commit()
+            flash("Password reset successfully. Please log in.", "success")
+            return redirect(url_for("login"))
+
+        return render_template("reset_password.html", token=token)
 
     @flask_app.route("/dashboard")
     @login_required
